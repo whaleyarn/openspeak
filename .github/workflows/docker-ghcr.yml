@@ -1,0 +1,85 @@
+name: Build and Push Docker Image
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/docker-ghcr.yml
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: openspeak-container
+  cancel-in-progress: true
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout OpenSpeak
+        uses: actions/checkout@v7
+        with:
+          repository: Elektryczna-Owca/OpenSpeak
+          ref: main
+          path: upstream
+          fetch-depth: 1
+
+      - name: Read upstream revision
+        id: upstream
+        shell: bash
+        run: |
+          echo "sha=$(git -C upstream rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$(git -C upstream rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5.10.0
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=raw,value=main
+            type=raw,value=sha-${{ steps.upstream.outputs.short_sha }}
+          labels: |
+            org.opencontainers.image.title=OpenSpeak
+            org.opencontainers.image.description=Container image for Elektryczna-Owca/OpenSpeak
+            org.opencontainers.image.source=https://github.com/whaleyarn/openspeak
+            org.opencontainers.image.url=https://github.com/Elektryczna-Owca/OpenSpeak
+            org.opencontainers.image.revision=${{ steps.upstream.outputs.sha }}
+            org.opencontainers.image.licenses=GPL-3.0
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6.19.2
+        with:
+          context: upstream/agenda-app
+          file: upstream/agenda-app/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          pull: true
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
